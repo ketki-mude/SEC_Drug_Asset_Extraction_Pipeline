@@ -1,0 +1,13 @@
+requests 
+pandas
+beautifulsoup4
+python-dotenv
+tqdm
+lxml
+html2text 
+boto3
+python-dotenv
+
+pinecone-client
+google-generativeai
+google-cloud-aiplatform
