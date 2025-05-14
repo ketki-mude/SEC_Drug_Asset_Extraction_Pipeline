@@ -4,7 +4,7 @@ This project implements an automated system for analyzing SEC filings to extract
 
 ## 📌 Project Resources
 
-- **Streamlit App**: [Application Link](http://34.134.167.79:8502/)
+- **Streamlit App**: [Application Link](http://34.134.167.79:8501)
 - **Documentation**: [Project Documentation](https://codelabs-preview.appspot.com/?file_id=1WCRLM8Uw9uFklAa_8tjpBmvVDP7hKa-UW-vBwFqVFvQ#3)
 
 ## 📌 Technologies Used
