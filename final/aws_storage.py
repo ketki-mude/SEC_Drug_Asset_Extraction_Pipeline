@@ -145,3 +145,32 @@ class S3Storage:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         key = f"{ticker}/metadata-{timestamp}.json"
         return self.save_file(key, metadata, "application/json")
+    
+    def save_consolidated_filing(self, ticker, filename, content):
+        """
+        Save consolidated SEC filing to S3
+        
+        Args:
+            ticker (str): Ticker symbol
+            filename (str): Filename for the consolidated document
+            content (str): Text content of consolidated filing
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Create S3 key
+            s3_key = f"{ticker.upper()}/consolidated/{filename}"
+            
+            # Upload to S3
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=content.encode('utf-8')
+            )
+            
+            logging.info(f"Saved consolidated filing to S3: {s3_key}")
+            return True
+        except Exception as e:
+            logging.error(f"Error saving consolidated filing: {str(e)}")
+            return False
