@@ -4,9 +4,7 @@ This project implements an automated system for analyzing SEC filings to extract
 
 ## 📌 Project Resources
 
-- **Streamlit App**: [Application Link](http://localhost:8501)
-- **Airflow Dashboard**: [Airflow Link](http://localhost:8080)
-- **S3 Storage**: [AWS Console](https://console.aws.amazon.com/s3/)
+- **Streamlit App**: [Application Link](http://34.134.167.79:8502/)
 - **Documentation**: [Project Documentation](https://codelabs-preview.appspot.com/?file_id=1WCRLM8Uw9uFklAa_8tjpBmvVDP7hKa-UW-vBwFqVFvQ#3)
 
 ## 📌 Technologies Used
