@@ -56,13 +56,13 @@ class ProductNameExtractor:
         
         # Product-related search queries
         product_queries = [
-            "product names portfolio offerings",
-            "product pipeline candidates",
-            "products and services",
-            "key products main products",
-            "product line flagship products",
-            "new products product releases",
-            "proprietary products patented products"
+            "investigational candidate",
+            "pipeline candidate",
+            "clinical candidate",
+            "preclinical data",
+            "development candidates",
+            "clinical trial",
+            "proof of mechanism"
         ]
         
         # Build metadata filter
@@ -126,99 +126,86 @@ class ProductNameExtractor:
         Returns:
             dict: Extracted product information
         """
-        logging.info(f"Extracting product names from {len(chunks)} chunks")
+        # Enhanced logging for product name extraction
+        logging.info(f"Starting product name extraction for {ticker}")
         
-        if not chunks:
-            return {"products": [], "error": "No relevant chunks found"}
+        # Log chunk summary
+        for i, chunk in enumerate(chunks[:3]):  # Show first 3 chunks
+            logging.info(f"Chunk {i+1} preview: {chunk['text'][:200]}...")
         
-        # Combine chunks with metadata for context
+        # Build context with logging
+        logging.info("Building context from chunks...")
         context = "\n\n".join([
             f"CHUNK {i+1} [From {chunk['form_type']} filed on {chunk['filing_date']}]:\n{chunk['text']}"
-            for i, chunk in enumerate(chunks[:20])  # Limit to top 20 chunks to avoid token limits
+            for i, chunk in enumerate(chunks[:20])
         ])
+        logging.info(f"Built context with {len(context)} characters")
         
         # Create a specialized prompt for product name extraction
         prompt = f"""
-        Extract ONLY actual drug candidates, therapeutic programs, and commercial products mentioned in these SEC filing excerpts for {ticker}. 
-
-        For biotechnology/pharmaceutical companies, the following ARE products or drug candidates:
-        - Target genes being developed into therapies 
-        - Molecular platforms when they are described as actual products/services
-        - Therapeutic modalities when they have specific names and are being developed
-        
-        The following are NEVER products (MUST EXCLUDE THESE):
-        - ANY financial instruments: shares, securities, warrants, stocks, offerings, notes, bonds, options
-        - ANY corporate entities, subsidiaries, or partnerships
-        - ANY facilities, buildings, or real estate
-        - General technology platforms unless specifically named as commercial offerings
-        - Generic research programs without specific identifiers
-        
-        For each product/candidate:
-        1. Extract the EXACT product name or identifier (preserving any codes)
-        2. Provide a brief description based ONLY on the text
-        3. Include development stage information if available
-        4. Include the target disease/condition if mentioned
-        
-        Biotechnology-specific instructions:
-        - Single gene names ARE valid product candidates if they are being targeted for therapy
-        - Include ALL development programs with specific identifiers, regardless of stage
-        - Look for terms like "pipeline," "candidate," "program," "therapy" to identify products
-        
-        SEC filing excerpts:
-        {context}
-        
-        Format your response as a structured JSON with this format:
-        {{
-          "products": [
+            You are a biotech data extractor analyzing SEC filings for {ticker}.
+            For each drug candidate or program mentioned, extract:
+            1. Exact product name/identifier
+            2. Mechanism of action (HOW it works)
+            3. Indication (WHAT disease/condition it treats)
+            4. Development status
+            
+            Only include products that have clear identifiers.
+            
+            SEC filing excerpts:
+            {context}
+            
+            Return a JSON with this EXACT structure:
             {{
-              "name": "Product name exactly as written",
-              "description": "Brief description based only on provided text",
-              "status": "Development stage (Phase 1, preclinical, etc.) if mentioned, otherwise 'Unknown'",
-              "target_indication": "Disease or condition targeted if mentioned",
-              "confidence": "high/medium/low based on clarity in text"
+              "products": [
+                {{
+                  "name": "Product identifier (e.g. EDG-7500)",
+                  "mechanism_of_action": "How the drug works (e.g. selective beta-1 adrenergic receptor antagonist)",
+                  "indication": "Disease/condition being treated (e.g. supraventricular tachycardia)",
+                  "status": "Development stage",
+                  "confidence": "high/medium/low"
+                }}
+              ]
             }}
-          ]
-        }}
-        
-        Only include the JSON in your response, no other text.
+            
+            Important:
+            - For mechanism_of_action and indication, extract specific details from the text
+            - Do NOT return "N/A" or empty strings unless truly no information exists
+            - Include exact quotes from the text when possible
+            - Consolidate information about the same product from different sections
         """
         
+        # Add debug logging for response content
         try:
-            # Generate response from Gemini
             response = self.model.generate_content(prompt)
             response_text = response.text
+            logging.debug(f"Full Gemini Response:\n{response_text}")
             
-            # Try to parse JSON from response
-            try:
-                # Remove markdown code block formatting if present
-                clean_response = response_text
-                if "```json" in clean_response:
-                    clean_response = clean_response.split("```json")[1].split("```")[0].strip()
-                elif "```" in clean_response:
-                    clean_response = clean_response.split("```")[1].split("```")[0].strip()
-                
-                product_data = json.loads(clean_response)
-                
-                # Add metadata
-                product_data["ticker"] = ticker
-                product_data["chunks_processed"] = len(chunks)
-                
-                return product_data
-                
-            except json.JSONDecodeError as je:
-                logging.error(f"Error parsing JSON from Gemini response: {str(je)}")
-                return {
-                    "products": [],
-                    "error": "Failed to parse product data",
-                    "raw_response": response_text
-                }
-                
+            # Clean and parse JSON
+            clean_response = response_text
+            if "```json" in clean_response:
+                clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_response:
+                clean_response = clean_response.split("```")[1].split("```")[0].strip()
+            
+            product_data = json.loads(clean_response)
+            
+            # Debug log each product's complete information
+            for product in product_data.get("products", []):
+                logging.debug(f"""
+                Product Details:
+                Name: {product.get('name')}
+                MOA: {product.get('mechanism_of_action')}
+                Indication: {product.get('indication')}
+                Status: {product.get('status')}
+                Confidence: {product.get('confidence')}
+                """)
+            
+            return product_data
+            
         except Exception as e:
-            logging.error(f"Error with Gemini extraction: {str(e)}")
-            return {
-                "products": [],
-                "error": str(e)
-            }
+            logging.error(f"Error in extract_product_names: {str(e)}")
+            return {"products": []}
     
     def run(self, ticker, top_k=15, form_types=None, output_file=None):
         """
@@ -251,19 +238,44 @@ class ProductNameExtractor:
         return results
 
     def extract_product_set(self, results):
-        """Extract unique product names into a set for further processing"""
-        product_set = set()
+        """Extract unique product names with improved deduplication"""
+        product_map = {}  # Use a map to track all variations and their information
         
         if "products" in results:
             for product in results["products"]:
                 if "name" in product:
-                    # Filter out financial instruments that might have been misclassified
-                    name = product["name"].lower()
-                    if not any(term in name for term in ["shares", "securities", "warrants", "offering"]):
-                        product_set.add(product["name"])
+                    # Normalize the name
+                    name = product["name"].strip().upper()
+                    
+                    # Handle common variations
+                    name = name.replace('CANDIDATE', '').strip()
+                    
+                    # Skip financial instruments
+                    if any(term in name.lower() for term in ["shares", "securities", "warrants", "offering"]):
+                        continue
+                    
+                    # If this is a new product or has better information
+                    if (name not in product_map or 
+                        (not product_map[name].get("target_indication") and product.get("target_indication")) or
+                        (not product_map[name].get("mechanism_of_action") and product.get("mechanism_of_action"))):
+                        
+                        product_map[name] = {
+                            "name": name,
+                            "target_indication": product.get("target_indication", ""),
+                            "mechanism_of_action": product.get("mechanism_of_action", ""),
+                            "status": product.get("status", ""),
+                            "confidence": product.get("confidence", "low")
+                        }
+                        logging.debug(f"Added/Updated product: {name}")
         
-        logging.info(f"Extracted {len(product_set)} unique product names")
-        return product_set
+        # Convert map to list of unique products
+        unique_products = list(product_map.values())
+        
+        logging.info(f"Extracted {len(unique_products)} unique products after deduplication")
+        for prod in unique_products:
+            logging.info(f"Unique product: {prod['name']}")
+        
+        return unique_products
 
     def query_product_details(self, ticker, product_name, top_k=25):
         """Query Pinecone for detailed information about a specific product"""
@@ -273,13 +285,16 @@ class ProductNameExtractor:
         detail_queries = [
             f"{product_name} mechanism of action how works",
             f"{product_name} target molecule pathway",
-            f"{product_name} indication disease condition",
-            f"{product_name} preclinical animal study model",
+            f"{product_name} indication or product candidates disease condition",
+            f"{product_name} preclinical studies/data/development",
             f"{product_name} clinical trial phase results",
             f"{product_name} development milestone upcoming"
         ]
         
         all_chunks = []
+        # Add debug logging
+        logging.info(f"Searching with queries for {product_name}:")
+ 
         
         # Query for each aspect
         for query in detail_queries:
@@ -324,59 +339,88 @@ class ProductNameExtractor:
         return result_chunks
 
     def extract_product_details(self, ticker, product_name, chunks):
-        """Generate structured product details using Gemini"""
+        """Generate structured product details using Gemini with verification"""
         logging.info(f"Extracting detailed information for {product_name}")
         
         if not chunks:
-            return {
-                "name": product_name,
-                "mechanism_of_action": "",
-                "target": "",
-                "indication": "",
-                "preclinical_data": [],
-                "clinical_trials": [],
-                "upcoming_milestones": [],
-                "references": []
-            }
+            logging.warning(f"No verified information found for {product_name}")
+            return None
         
-        # Combine chunks with metadata for context
-        context = "\n\n".join([
-            f"CHUNK {i+1} [From {chunk['form_type']} filed on {chunk['filing_date']}]:\n{chunk['text']}"
-            for i, chunk in enumerate(chunks[:15])  # Limit to avoid token limits
-        ])
+        # Get verification confidence from chunks
+        confidence = chunks[0].get('product_verification', 'low')
         
-        # Create a detailed extraction prompt
+        # Organize chunks by query type
+        organized_chunks = {
+            'mechanism': [],
+            'target': [],
+            'indication': [],
+            'preclinical': [],
+            'clinical': [],
+            'development': []
+        }
+        
+        for chunk in chunks:
+            query_type = chunk.get('query_type', '').lower()
+            for category in organized_chunks:
+                if category in query_type:
+                    organized_chunks[category].append(chunk)
+        
+        # Create context with organized information
+        context_sections = []
+        for category, category_chunks in organized_chunks.items():
+            if category_chunks:
+                context_sections.append(f"\n{category.upper()} INFORMATION:")
+                for i, chunk in enumerate(category_chunks[:3], 1):  # Top 3 chunks per category
+                    context_sections.append(
+                        f"[{chunk['form_type']} {chunk['filing_date']}] {chunk['text']}"
+                    )
+        
+        context = "\n\n".join(context_sections)
+        
+        # Modified prompt for better verification
         prompt = f"""
-        Based on the SEC filing excerpts provided, extract detailed information about the product/candidate {product_name} from {ticker}.
-
-        Return ONLY a JSON object with the following structure and fields:
-        {{
-          "name": "{product_name}",
-          "mechanism_of_action": "Detailed description of how the product works (e.g., siRNA to silence gene expression)",
-          "target": "Biological molecule or pathway targeted (e.g., INHBE, dystrophin pre-mRNA)",
-          "indication": "Disease or condition being targeted (e.g., Duchenne muscular dystrophy)",
-          "preclinical_data": [
-            "Bullet-point summaries of key animal experiments or preclinical results"
-          ],
-          "clinical_trials": [
-            "Structured information about each clinical trial including phase, participants, results if available"
-          ],
-          "upcoming_milestones": [
-            "Expected future catalysts or events related to this product"
-          ],
-          "references": [
-            "Document references where this information was found (e.g., '10-K filed on 2023-03-15')"
-          ]
-        }}
-
-        For each field:
-        - If no information is available, use an empty string or empty array
-        - Include specific dates, numbers, and results when available
-        - Be comprehensive but concise
-        - Only include information that is explicitly mentioned in the text
-
-        SEC filing excerpts about {product_name}:
+        Analyze the following SEC filing excerpts about {product_name} from {ticker}.
+        
+        First, verify this is a legitimate drug/program and not a misidentified term.
+        Then extract detailed information ONLY if verification passes.
+        
+        Current verification confidence: {confidence}
+        
+        Context:
         {context}
+        
+        Return a JSON object with this structure:
+        {{
+            "verified": true/false,
+            "verification_notes": "Why you believe this is or isn't a real drug/program",
+            "name": "{product_name}",
+            "confidence": "{confidence}",
+            "mechanism_of_action": "Detailed description if available",
+            "target": "Specific molecular/biological target",
+            "indication": "Disease/condition being targeted",
+            "preclinical_data": [
+                "Bullet-point summaries of key animal experiments or preclinical results"
+            ],
+            "clinical_trials": [
+                "Structured information about each clinical trial including phase, participants, results if available"
+            ],
+            "upcoming_milestones": [
+                "Expected future catalysts or events related to this product"
+            ],
+            "references": [
+                "Only include: Section name, form type (10-K/8-K), and filing date in format: 'Section Name (Form Type, YYYY-MM-DD)'"
+            ]
+        }}
+        
+        For references, use this exact format:
+        - "Pipeline Overview (10-K, 2024-03-15)"
+        - "Clinical Development (8-K, 2024-01-20)"
+        Important:
+    - Only include references where {product_name} is specifically discussed
+    - Add a brief note about what information was found in each reference
+    - Sort references by date (newest first)
+        
+        Only include sections that directly discuss {product_name}.
         """
         
         try:
@@ -480,69 +524,159 @@ class ProductNameExtractor:
             print("Table generation failed. Install required packages with: pip install pandas tabulate openpyxl")
             return None
 
+    def validate_product_information(self, product):
+        """Validate if product has sufficient drug/program-related information"""
+        
+        # Critical fields - need at least 2 of these 3
+        critical_fields = {
+            "name": "Product identifier",
+            "mechanism_of_action": "Mechanism of action",
+            "indication": "Disease/condition indication"
+        }
+        
+        # Supporting fields - need at least 1 of these
+        supporting_fields = {
+            "target": "Molecular/pathway target",
+            "preclinical_data": "Preclinical studies",
+            "clinical_trials": "Clinical trials",
+            "upcoming_milestones": "Development milestones",
+            "references": "Source documents"
+        }
+        
+        # Count valid critical fields
+        critical_count = 0
+        missing_critical = []
+        for field, desc in critical_fields.items():
+            value = product.get(field, '')
+            if isinstance(value, str):
+                # Check if value exists and isn't just a placeholder
+                if value and not any(x in value.lower() for x in ['unknown', 'n/a', 'placeholder', 'requires']):
+                    critical_count += 1
+                else:
+                    missing_critical.append(desc)
+        
+        # Count valid supporting fields
+        supporting_count = 0
+        missing_supporting = []
+        for field, desc in supporting_fields.items():
+            value = product.get(field)
+            if value:
+                if isinstance(value, list):
+                    if len(value) > 0 and not all('unknown' in str(x).lower() for x in value):
+                        supporting_count += 1
+                        continue
+                elif isinstance(value, str) and not any(x in value.lower() for x in ['unknown', 'n/a', 'placeholder', 'requires']):
+                    supporting_count += 1
+                    continue
+            missing_supporting.append(desc)
+        
+        # Validation logic:
+        # 1. Must have at least 2 critical fields
+        # 2. Must have at least 1 supporting field
+        is_valid = critical_count >= 2 and supporting_count >= 1
+        
+        # Build validation message
+        validation_notes = []
+        if critical_count < 2:
+            validation_notes.append(f"Missing critical information: needs {2-critical_count} more of {', '.join(missing_critical)}")
+        if supporting_count < 1:
+            validation_notes.append(f"Missing supporting information: needs at least 1 of {', '.join(missing_supporting)}")
+        
+        logging.info(f"Validation results for {product.get('name', 'Unknown')}:")
+        logging.info(f"Critical fields: {critical_count}/{len(critical_fields)}")
+        logging.info(f"Supporting fields: {supporting_count}/{len(supporting_fields)}")
+        
+        return is_valid, validation_notes
+
     def analyze_detailed_products(self, ticker, top_k=15, output_json=None, output_table=None, upload_to_s3=False):
-        """Complete pipeline to extract product details and generate table"""
+        """Complete pipeline with improved validation"""
         logging.info(f"Starting detailed product analysis for {ticker}")
         
-        # Step 1: Get initial product list
-        chunks = self.retrieve_product_chunks(ticker, top_k)
-        results = self.extract_product_names(chunks, ticker)
-        
-        # Step 2: Create set of product names
-        product_set = self.extract_product_set(results)
-        
-        if not product_set:
-            logging.warning(f"No products identified for {ticker}")
+        try:
+            # Step 1: Initial product list
+            chunks = self.retrieve_product_chunks(ticker, top_k)
+            results = self.extract_product_names(chunks, ticker)
+            product_set = self.extract_product_set(results)
+            
+            # Step 2: Get detailed information and validate
+            valid_products = []
+            invalid_products = []
+            
+            for product in product_set:
+                logging.info(f"\nProcessing details for product: {product['name']}")
+                
+                # Query Pinecone for product details
+                product_chunks = self.query_product_details(ticker, product['name'], top_k=30)
+                logging.info(f"Found {len(product_chunks)} chunks for {product['name']}")
+                
+                if not product_chunks:
+                    logging.warning(f"No detailed information found for {product['name']}")
+                    invalid_products.append({"name": product['name'], "reason": "No supporting information found"})
+                    continue
+                
+                # Extract structured data
+                product_details = self.extract_product_details(ticker, product['name'], product_chunks)
+                
+                # Validate product information
+                is_valid, missing_info = self.validate_product_information(product_details)
+                
+                if is_valid:
+                    valid_products.append(product_details)
+                    logging.info(f"✓ Validated {product['name']} - Added to results")
+                else:
+                    invalid_products.append({
+                        "name": product['name'],
+                        "reason": f"Insufficient information: {', '.join(missing_info)}"
+                    })
+                    logging.warning(f"✗ Rejected {product['name']} - Missing critical information")
+            
+            # Log validation results
+            logging.info(f"\nValidation Summary for {ticker}:")
+            logging.info(f"- Accepted Products: {len(valid_products)}")
+            logging.info(f"- Rejected Products: {len(invalid_products)}")
+            for invalid in invalid_products:
+                logging.info(f"  ✗ {invalid['name']}: {invalid['reason']}")
+            
+            # Save results if requested
+            if output_json:
+                results_with_metadata = {
+                    "ticker": ticker,
+                    "analysis_date": datetime.now().isoformat(),
+                    "valid_products": valid_products,
+                    "rejected_products": invalid_products,
+                    "validation_summary": {
+                        "total_products": len(product_set),
+                        "valid_products": len(valid_products),
+                        "invalid_products": len(invalid_products)
+                    }
+                }
+                
+                with open(output_json, 'w') as f:
+                    json.dump(results_with_metadata, f, indent=2)
+                logging.info(f"Saved detailed results to: {output_json}")
+            
+            # Generate table if requested
+            if output_table and valid_products:
+                self.create_product_table(valid_products, output_table)
+            
+            return {
+                "ticker": ticker,
+                "products": valid_products,
+                "product_count": len(valid_products),
+                "validation": {
+                    "rejected_count": len(invalid_products),
+                    "rejected_products": invalid_products
+                }
+            }
+            
+        except Exception as e:
+            logging.error(f"Error in detailed analysis: {str(e)}")
             return {
                 "ticker": ticker,
                 "products": [],
-                "error": "No products identified"
+                "product_count": 0,
+                "error": str(e)
             }
-        
-        # Step 3: Get detailed information for each product
-        detailed_products = []
-        
-        for product_name in product_set:
-            # Query Pinecone for this specific product
-            product_chunks = self.query_product_details(ticker, product_name, top_k=30)
-            
-            # Extract structured data
-            product_details = self.extract_product_details(ticker, product_name, product_chunks)
-            
-            detailed_products.append(product_details)
-        
-        # Step 4: Save detailed results locally if requested
-        if output_json:
-            try:
-                with open(output_json, 'w') as f:
-                    json.dump(detailed_products, f, indent=2)
-                logging.info(f"Saved detailed results to local file: {output_json}")
-            except Exception as e:
-                logging.error(f"Error saving detailed results locally: {str(e)}")
-        
-        # Step 5: Generate table if requested
-        if output_table:
-            self.create_product_table(detailed_products, output_table)
-        
-        # Step 6: Save to S3 if requested
-        if upload_to_s3:
-            # Get base filename without extension
-            if output_json:
-                filename_base = os.path.splitext(os.path.basename(output_json))[0]
-            else:
-                filename_base = f"{ticker.lower()}_products_{datetime.now().strftime('%Y%m%d')}"
-                
-            s3_result = self.save_to_s3(ticker, filename_base, detailed_products)
-            if s3_result:
-                logging.info(f"Successfully saved all files to S3 for {ticker}")
-            else:
-                logging.warning(f"There were issues saving some files to S3 for {ticker}")
-        
-        return {
-            "ticker": ticker,
-            "products": detailed_products,
-            "product_count": len(detailed_products)
-        }
 
     def filter_products_for_json(self, products):
         """Remove products with any null/empty values for JSON output"""
@@ -624,7 +758,7 @@ class ProductNameExtractor:
         return md
 
     def save_to_s3(self, ticker, filename_base, products):
-        """Save product details to S3 in JSON and MD formats (no CSV)"""
+        """Save product details to S3, overwriting existing files"""
         try:
             # Initialize S3Storage
             s3 = S3Storage()
@@ -632,37 +766,37 @@ class ProductNameExtractor:
                 logging.error("Failed to connect to S3")
                 return False
             
-            # Create base folder path
+            # Create base folder path and fixed filenames (no timestamp)
             base_path = f"output/{ticker}"
             success = True
             
-            # 1. Save JSON (filtered to remove products with null values)
+            # 1. Save JSON (overwrite if exists)
             filtered_products = self.filter_products_for_json(products)
-            json_key = f"{base_path}/{filename_base}.json"
-            # The JSON upload is working fine, no changes needed
+            json_key = f"{base_path}/{ticker}_products.json"  # Fixed filename
+            
             json_result = s3.save_file(
                 json_key, 
                 json.dumps(filtered_products, indent=2),
                 content_type="application/json"
             )
             if json_result:
-                logging.info(f"Saved filtered JSON ({len(filtered_products)} complete products) to S3: {json_key}")
+                logging.info(f"Saved/Updated JSON ({len(filtered_products)} products) to S3: {json_key}")
             else:
                 logging.error(f"Failed to save JSON to S3: {json_key}")
                 success = False
             
-            # 2. Save Markdown (all products)
+            # 2. Save Markdown (overwrite if exists)
             try:
                 md_content = self.convert_to_markdown(products, ticker)
+                md_key = f"{base_path}/{ticker}_products.md"  # Fixed filename
                 
-                md_key = f"{base_path}/{filename_base}.md"
                 md_result = s3.save_file(
                     md_key,
                     md_content,
                     content_type="text/markdown"
                 )
                 if md_result:
-                    logging.info(f"Saved Markdown (all {len(products)} products) to S3: {md_key}")
+                    logging.info(f"Saved/Updated Markdown to S3: {md_key}")
                 else:
                     logging.error(f"Failed to save Markdown to S3: {md_key}")
                     success = False

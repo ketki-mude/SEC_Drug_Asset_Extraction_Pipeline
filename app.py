@@ -65,6 +65,32 @@ def get_results_from_s3(ticker):
     
     return None
 
+def get_cached_results(ticker):
+    """Check S3 for cached results first"""
+    try:
+        from aws_storage import S3Storage
+        s3 = S3Storage()
+        
+        json_key = f"output/{ticker}/{ticker}_products.json"
+        
+        if s3.file_exists(json_key):
+            json_data = s3.get_file(json_key)
+            if json_data:
+                try:
+                    return {
+                        "status": "success",
+                        "data": json.loads(json_data),
+                        "cached": True
+                    }
+                except json.JSONDecodeError:
+                    logging.error(f"Invalid JSON data for {ticker}")
+            else:
+                logging.info(f"No cached data found for {ticker}")
+    except Exception as e:
+        logging.error(f"Cache check failed: {str(e)}")
+        # Don't show error to user, just log it
+    return None
+
 # Form for triggering analysis
 with st.form("ticker_form"):
     ticker = st.text_input("Enter Ticker Symbol:", placeholder="E.g., WVE, DRNA, ALNY").strip().upper()
@@ -72,54 +98,62 @@ with st.form("ticker_form"):
 
 # Process the ticker when form is submitted
 if submitted and ticker:
-    # First validate if this is a biotech company
     try:
         is_biotech, company_info = is_biotech_company(ticker)
         
-        if not is_biotech or not company_info:
-            st.error(f"{ticker} is not a recognized biotech organization. Please try a different ticker.")
+        if not is_biotech:
+            st.error(f"{ticker} is not a recognized biotech organization.")
         else:
-            # Only proceed if it's a valid biotech company
-            # Update session state
             st.session_state.ticker = ticker
-            st.session_state.job_status = "processing"
             
-            # Show company name from validation
-            st.info(f"Processing SEC filings for {company_info.get('name', ticker)}...")
-            
-            # Show processing message
-            with st.spinner(f"Analyzing filings..."):
-                # Import and call the flow controller
-                import flow_controller
-                result = flow_controller.process_ticker(ticker)
-                
-                if result["status"] == "success":
-                    st.session_state.results = result["data"]
-                    st.session_state.job_status = "success"
-                    st.success(f"Analysis complete! Found {len(result['data'])} products.")
-                else:
-                    st.session_state.job_status = "error"
-                    st.error(f"Analysis failed: {result['message']}")
+            # Check cache first
+            cached_results = get_cached_results(ticker)
+            if cached_results:
+                st.info("Found cached analysis results!")
+                st.session_state.results = cached_results["data"]
+                st.session_state.job_status = "success"
+            else:
+                # Only run pipeline if no cache exists
+                st.info(f"Processing SEC filings for {company_info.get('name', ticker)}...")
+                with st.spinner("Analyzing filings..."):
+                    import flow_controller
+                    result = flow_controller.process_ticker(ticker)
+                    
+                    if result["status"] == "success":
+                        st.session_state.results = result["data"]
+                        st.session_state.job_status = "success"
+                        st.success(f"Analysis complete! Found {len(result['data'])} products.")
+                    else:
+                        st.session_state.job_status = "error"
+                        st.error(f"Analysis failed: {result['message']}")
     except Exception as e:
-        st.error(f"Error validating ticker {ticker}: {str(e)}")
+        st.error(f"Error processing {ticker}: {str(e)}")
 
 # Display results if available
 if st.session_state.results:
     st.header(f"Product Analysis Results for {st.session_state.ticker}")
     
-    # Create a DataFrame for displaying in a table
+    # Create a DataFrame for displaying in a table with only the desired columns
     product_data = []
     for product in st.session_state.results:
         product_data.append({
             "Name/Number": product.get("name", ""),
-            "Mechanism of Action": product.get("mechanism_of_action", ""),
-            "Indication": product.get("indication", "")
+            "Indication": product.get("indication", "N/A"),
+            "Mechanism of Action": product.get("mechanism_of_action", "N/A")
         })
     
     if product_data:
         df = pd.DataFrame(product_data)
-        st.dataframe(df, use_container_width=True)
-        
+        st.dataframe(
+            df,
+            use_container_width=True,
+            column_config={
+                "Name/Number": st.column_config.TextColumn("Name/Number"),
+                "Indication": st.column_config.TextColumn("Indication"),
+                "Mechanism of Action": st.column_config.TextColumn("Mechanism of Action")
+            }
+        )
+
         # Show detailed view for selected product
         st.subheader("Detailed Product Information")
         selected_product = st.selectbox(

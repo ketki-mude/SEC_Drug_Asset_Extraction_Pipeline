@@ -80,20 +80,27 @@ class S3Storage:
             logging.error(f"Error checking S3 connection: {str(e)}")
             return False
     
-    def file_exists(self, key):
-        """Check if a file exists in the S3 bucket"""
-        if not self.s3_client:
-            return False
-            
+    def get_file(self, key):
+        """Get file content from S3"""
         try:
-            response = self.s3_client.list_objects_v2(
+            response = self.s3_client.get_object(
                 Bucket=self.bucket_name,
-                Prefix=key,
-                MaxKeys=1
+                Key=key
             )
-            return 'Contents' in response and len(response['Contents']) > 0
+            return response['Body'].read().decode('utf-8')
         except Exception as e:
-            logging.error(f"Error checking if file exists: {str(e)}")
+            logging.error(f"Error getting file from S3: {str(e)}")
+            return None
+    
+    def file_exists(self, key):
+        """Check if a file exists in S3"""
+        try:
+            self.s3_client.head_object(
+                Bucket=self.bucket_name,
+                Key=key
+            )
+            return True
+        except:
             return False
     
     def save_file(self, key, data, content_type='text/plain'):

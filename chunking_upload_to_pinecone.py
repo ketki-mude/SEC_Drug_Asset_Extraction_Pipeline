@@ -25,45 +25,72 @@ class SemanticChunker:
     
     def __init__(self, similarity_threshold=0.75):
         """Initialize chunker with embedding model and Pinecone connection"""
-        # Simply use all-mpnet-base-v2 model (reliable and works on Windows)
-        self.embedding_model = SentenceTransformer('all-mpnet-base-v2')
-        logging.info("Loaded embedding model: all-mpnet-base-v2")
-        
-        # Initialize Pinecone
-        self.pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY'))
-        
-        # Set up the index
-        index_name = os.getenv('PINECONE_INDEX_NAME')
-        
-        # Check if index exists and create if needed (copied from pinecone_manager.py)
-        existing_indexes = [idx["name"] for idx in self.pc.list_indexes()]
-        
-        if index_name not in existing_indexes:
+        try:
+            # Simply use all-mpnet-base-v2 model
+            self.embedding_model = SentenceTransformer('all-mpnet-base-v2')
+            logging.info("Loaded embedding model: all-mpnet-base-v2")
+            
+            # Get Pinecone credentials from environment
+            pinecone_api_key = os.getenv('PINECONE_API_KEY')
+            pinecone_env = os.getenv('PINECONE_ENVIRONMENT')
+            index_name = os.getenv('PINECONE_INDEX_NAME')
+            
+            if not all([pinecone_api_key, pinecone_env, index_name]):
+                raise ValueError("Missing required Pinecone environment variables")
+                
+            # Initialize Pinecone with proper environment
+            self.pc = Pinecone(
+                api_key=pinecone_api_key,
+                environment=pinecone_env  # Add environment parameter
+            )
+            
+            # Check if index exists and create if needed
+            existing_indexes = [idx["name"] for idx in self.pc.list_indexes()]
+            
+            if index_name not in existing_indexes:
+                try:
+                    logging.info(f"Creating new index: {index_name}")
+                    self.pc.create_index(
+                        name=index_name,
+                        dimension=768,  # all-mpnet-base-v2 dimensions
+                        metric="cosine",
+                        spec={
+                            "serverless": {
+                                "cloud": "aws",
+                                "region": pinecone_env
+                            }
+                        }
+                    )
+                    logging.info(f"Created new Pinecone index: {index_name}")
+                except Exception as e:
+                    logging.error(f"Failed to create index: {str(e)}")
+                    raise
+            
+            # Initialize index connection with environment
+            self.index = self.pc.Index(
+                name=index_name,
+                embedding_api_key=pinecone_api_key,  # Add API key
+                environment=pinecone_env  # Add environment
+            )
+            
+            # Verify connection with a simple query
             try:
-                # Create index if it doesn't exist
-                logging.info(f"Index '{index_name}' not found. Creating new index...")
-                self.pc.create_index(
-                    name=index_name,
-                    dimension=768,  # all-mpnet-base-v2 dimensions
-                    spec={
-                        "serverless": {
-                            "cloud": "aws",
-                            "region": os.getenv('PINECONE_ENVIRONMENT')
-                        },
-                        "metric": "cosine"
-                    }
+                self.index.query(
+                    vector=[0.0] * 768,
+                    top_k=1,
+                    include_metadata=False
                 )
-                logging.info(f"Created new Pinecone index: {index_name}")
+                logging.info(f"Successfully connected to Pinecone index: {index_name}")
             except Exception as e:
-                logging.error(f"Failed to create index: {str(e)}")
-                logging.info("Please create the index manually in the Pinecone Console")
+                logging.error(f"Failed to verify Pinecone connection: {str(e)}")
                 raise
-        
-        self.index = self.pc.Index(index_name)
-        logging.info(f"Connected to Pinecone index: {index_name}")
-        
-        # Set similarity threshold for chunking
-        self.similarity_threshold = similarity_threshold
+            
+            # Set similarity threshold for chunking
+            self.similarity_threshold = similarity_threshold
+            
+        except Exception as e:
+            logging.error(f"Error initializing chunker: {str(e)}")
+            raise
     
     def semantic_chunking(self, text, similarity_threshold=None):
         """Improved semantic chunking with better paragraph handling"""
