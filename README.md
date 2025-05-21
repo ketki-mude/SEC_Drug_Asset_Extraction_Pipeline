@@ -93,12 +93,9 @@ This project implements an automated system for analyzing SEC filings to extract
    ```
 
 3. **Running the Pipeline**
-   ```bash
-   # Start Airflow
-   docker-compose up -d
 
    # Launch Streamlit
-   streamlit run frontend/app.py
+   streamlit run app.py
    ```
 
 
